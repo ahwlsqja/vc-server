@@ -36,4 +36,14 @@ export class VcController {
   async getVCsByWallet(data: { walletAddress: string }) {
     return this.vcService.getVCsByWallet(data.walletAddress);
   }
+
+  @GrpcMethod('VCService', 'CheckAuth')
+  async checkAuth(data: { walletAddress: string }) {
+    return this.vcService.checkAuth(data.walletAddress);
+  }
+
+  @GrpcMethod('VCService', 'HealthCheck')
+  async healthCheck(data: { service?: string }) {
+    return this.vcService.healthCheck(data);
+  }
 }

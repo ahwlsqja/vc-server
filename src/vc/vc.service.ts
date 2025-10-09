@@ -1,5 +1,5 @@
 // vc-service/src/vc/vc.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Auth } from './entities/auth.entity';
@@ -40,6 +40,26 @@ export class VcService {
       message: '지갑 등록 완료',
     };
   }
+
+  /**
+   * 지갑 등록 확인 (지갑 주소만)
+   */
+  async checkAuth(walletAddress: string){
+    const auth = await this.authRepository.findOne({
+      where: { walletAddress }
+    });
+
+    if (!auth) {
+      throw new NotFoundException(`지갑이 존재하지 않습니다. 주소: ${walletAddress}`);
+    }
+
+    return {
+      success: true,
+      authId: auth.id,
+      message: '지갑 확인 완료',
+    };
+  }
+  
 
   /**
    * Guardian 정보 업데이트
@@ -263,9 +283,9 @@ export class VcService {
     });
 
     if (!auth) {
-      return { 
-        success: false, 
-        error: 'Auth not found' 
+      return {
+        success: false,
+        error: 'Auth not found'
       };
     }
 
@@ -277,6 +297,19 @@ export class VcService {
     return {
       success: result.affected > 0,
       message: result.affected > 0 ? 'VC deleted' : 'VC not found',
+    };
+  }
+
+  /**
+   * gRPC Health Check
+   */
+  async healthCheck(data: { service?: string }): Promise<any> {
+    // gRPC service is responding - return SERVING status
+    return {
+      status: 1, // SERVING
+      message: 'VCService is serving',
+      timestamp: new Date().toISOString(),
+      version: '1.0.0',
     };
   }
 }
