@@ -34,10 +34,47 @@ export class VcService {
       throw new Error(`이미 지갑이 존재합니다. 주소: ${walletAddress}`);
     }
 
+    const newAuth = await this.authRepository.save({ walletAddress });
+
     return {
       success: true,
-      authId: auth.id,
+      authId: newAuth.id,
       message: '지갑 등록 완료',
+    };
+  }
+
+  async getGuardianInfo(walletAddress: string){
+    const auth = await this.authRepository.findOne({
+      where: { walletAddress },
+      relations: ['guardian']
+    });
+
+    if (!auth) {
+      return {
+        success: false,
+        error: '지갑이 존재하지 않습니다.'
+      };
+    }
+
+    const guardian = await this.guardianRepository.findOne({
+      where: { auth: { id: auth.id } }
+    });
+
+    if (!guardian) {
+      return {
+        success: false,
+        error: '가디언 정보가 존재하지 않습니다.'
+      };
+    }
+
+    return {
+      success: true,
+      guardianId: guardian.id,
+      email: guardian.email || '',
+      phone: guardian.phone || '',
+      name: guardian.name || '',
+      isEmailVerified: guardian.isEmailVerified,
+      isOnChainRegistered: guardian.isOnChainRegistered,
     };
   }
 
@@ -93,6 +130,7 @@ export class VcService {
           phone: data.phone || guardian.phone,
           name: data.name || guardian.name,
           isEmailVerified: data.isEmailVerified ?? guardian.isEmailVerified,
+          isOnChainRegistered: data.isOnChainRegistered ?? guardian.isOnChainRegistered
         });
       } else {
         // 새로 생성
@@ -277,7 +315,11 @@ export class VcService {
     return { vcs };
   }
 
-  async deleteVC(data: any): Promise<any> {
+
+  /**
+   * VC 무효화 (삭제 + 이유 기록)
+   */
+  async invalidateVC(data: { petDID: string; guardianAddress: string; reason: string }): Promise<any> {
     const auth = await this.authRepository.findOne({
       where: { walletAddress: data.guardianAddress }
     });
@@ -285,18 +327,42 @@ export class VcService {
     if (!auth) {
       return {
         success: false,
-        error: 'Auth not found'
+        error: '지갑이 존재하지 않습니다.'
       };
     }
 
+    // VC 존재 여부 확인
+    const vc = await this.vcRepository.findOne({
+      where: {
+        auth: { id: auth.id },
+        petDID: data.petDID
+      }
+    });
+
+    if (!vc) {
+      return {
+        success: false,
+        error: 'VC가 존재하지 않습니다.'
+      };
+    }
+
+    // VC 삭제
     const result = await this.vcRepository.delete({
       auth: { id: auth.id },
       petDID: data.petDID,
     });
 
+    if (result.affected > 0) {
+      console.log(`VC 무효화 완료 - petDID: ${data.petDID}, guardianAddress: ${data.guardianAddress}, 이유: ${data.reason}`);
+      return {
+        success: true,
+        message: 'VC가 무효화되었습니다.',
+      };
+    }
+
     return {
-      success: result.affected > 0,
-      message: result.affected > 0 ? 'VC deleted' : 'VC not found',
+      success: false,
+      error: 'VC 무효화 실패'
     };
   }
 

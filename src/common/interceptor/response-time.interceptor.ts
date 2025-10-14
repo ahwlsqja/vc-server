@@ -13,7 +13,8 @@ import {
       context: ExecutionContext,
       next: CallHandler<any>,
     ): Observable<any> | Promise<Observable<any>> {
-      const req = context.switchToHttp().getRequest();
+      const req = context.switchToRpc().getContext();
+      console.log(req)
   
       const reqTime = Date.now();
   
