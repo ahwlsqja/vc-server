@@ -6,6 +6,12 @@ import { Auth } from './entities/auth.entity';
 import { VC } from './entities/vc.entity';
 import { Guardian } from './entities/guardian.entity';
 import { Shelter } from './entities/shelter.entity';
+import {
+  VCErrorCode,
+  VCResponse,
+  createErrorResponse,
+  createSuccessResponse,
+} from '../common/const/vc-error-codes';
 
 
 @Injectable()
@@ -25,83 +31,102 @@ export class VcService {
   /**
    * Auth 등록 (지갑 주소만)
    */
-  async registerAuth(walletAddress: string){
-    const auth = await this.authRepository.findOne({
-      where: { walletAddress }
-    });
+  async registerAuth(walletAddress: string): Promise<VCResponse> {
+    try {
+      const auth = await this.authRepository.findOne({
+        where: { walletAddress }
+      });
 
-    if (auth) {
-      throw new Error(`이미 지갑이 존재합니다. 주소: ${walletAddress}`);
+      if (auth) {
+        return createErrorResponse(
+          VCErrorCode.WALLET_ALREADY_EXISTS,
+          `이미 지갑이 존재합니다. 주소: ${walletAddress}`
+        );
+      }
+
+      const newAuth = await this.authRepository.save({ walletAddress });
+
+      return createSuccessResponse({
+        authId: newAuth.id,
+      }, '지갑 등록 완료');
+    } catch (error) {
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        `지갑 등록 실패: ${error.message}`
+      );
     }
-
-    const newAuth = await this.authRepository.save({ walletAddress });
-
-    return {
-      success: true,
-      authId: newAuth.id,
-      message: '지갑 등록 완료',
-    };
   }
 
-  async getGuardianInfo(walletAddress: string){
-    const auth = await this.authRepository.findOne({
-      where: { walletAddress },
-      relations: ['guardian']
-    });
+  async getGuardianInfo(walletAddress: string): Promise<VCResponse> {
+    try {
+      const auth = await this.authRepository.findOne({
+        where: { walletAddress },
+        relations: ['guardian']
+      });
 
-    if (!auth) {
-      return {
-        success: false,
-        error: '지갑이 존재하지 않습니다.'
-      };
+      if (!auth) {
+        return createErrorResponse(VCErrorCode.WALLET_NOT_FOUND);
+      }
+
+      const guardian = await this.guardianRepository.findOne({
+        where: { auth: { id: auth.id } }
+      });
+
+      console.log(guardian)
+
+      if (!guardian) {
+        return createErrorResponse(VCErrorCode.GUARDIAN_NOT_FOUND);
+      }
+
+      console.log(guardian.email)
+      return createSuccessResponse({
+        guardianId: guardian.id,
+        email: guardian.email || '',
+        phone: guardian.phone || '',
+        name: guardian.name || '',
+        isEmailVerified: guardian.isEmailVerified,
+        isOnChainRegistered: guardian.isOnChainRegistered,
+      });
+    } catch (error) {
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        `가디언 정보 조회 실패: ${error.message}`
+      );
     }
-
-    const guardian = await this.guardianRepository.findOne({
-      where: { auth: { id: auth.id } }
-    });
-
-    if (!guardian) {
-      return {
-        success: false,
-        error: '가디언 정보가 존재하지 않습니다.'
-      };
-    }
-
-    return {
-      success: true,
-      guardianId: guardian.id,
-      email: guardian.email || '',
-      phone: guardian.phone || '',
-      name: guardian.name || '',
-      isEmailVerified: guardian.isEmailVerified,
-      isOnChainRegistered: guardian.isOnChainRegistered,
-    };
   }
 
   /**
    * 지갑 등록 확인 (지갑 주소만)
    */
-  async checkAuth(walletAddress: string){
-    const auth = await this.authRepository.findOne({
-      where: { walletAddress }
-    });
+  async checkAuth(walletAddress: string): Promise<VCResponse> {
+    try {
+      const auth = await this.authRepository.findOne({
+        where: { walletAddress }
+      });
 
-    if (!auth) {
-      throw new NotFoundException(`지갑이 존재하지 않습니다. 주소: ${walletAddress}`);
+      if (!auth) {
+        return createErrorResponse(
+          VCErrorCode.WALLET_NOT_FOUND,
+          `지갑이 존재하지 않습니다. 주소: ${walletAddress}`
+        );
+      }
+
+      return createSuccessResponse({
+        authId: auth.id,
+      }, '지갑 확인 완료');
+    } catch (error) {
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        `지갑 확인 실패: ${error.message}`
+      );
     }
-
-    return {
-      success: true,
-      authId: auth.id,
-      message: '지갑 확인 완료',
-    };
   }
   
 
   /**
    * Guardian 정보 업데이트
    */
-  async updateGuardianInfo(data: any): Promise<any> {
+  async updateGuardianInfo(data: any): Promise<VCResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -112,10 +137,11 @@ export class VcService {
       });
 
       if (!auth) {
-        return {
-          success: false,
-          error: '지갑이 없습니다! 이메일 인증을 먼저 해주세요.',
-        };
+        await queryRunner.rollbackTransaction();
+        return createErrorResponse(
+          VCErrorCode.WALLET_NOT_FOUND,
+          '지갑이 없습니다! 이메일 인증을 먼저 해주세요.'
+        );
       }
 
       // Guardian 확인 or 생성
@@ -145,17 +171,15 @@ export class VcService {
 
       await queryRunner.commitTransaction();
 
-      return {
-        success: true,
+      return createSuccessResponse({
         guardianId: guardian.id,
-        message: '가디언이 정보 업데이트 완료',
-      };
+      }, '가디언이 정보 업데이트 완료');
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      return {
-        success: false,
-        error: error.message,
-      };
+      return createErrorResponse(
+        VCErrorCode.TRANSACTION_FAILED,
+        `가디언 정보 업데이트 실패: ${error.message}`
+      );
     } finally {
       await queryRunner.release();
     }
@@ -164,7 +188,7 @@ export class VcService {
   /**
    * Shelter 정보 업데이트
    */
-  async updateShelterInfo(data: any): Promise<any> {
+  async updateShelterInfo(data: any): Promise<VCResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -174,10 +198,11 @@ export class VcService {
       });
 
       if (!auth) {
-        return {
-          success: false,
-          error: '지갑이 없습니다! 이메일 인증을 먼저 해주세요.',
-        };
+        await queryRunner.rollbackTransaction();
+        return createErrorResponse(
+          VCErrorCode.WALLET_NOT_FOUND,
+          '지갑이 없습니다! 이메일 인증을 먼저 해주세요.'
+        );
       }
 
       let shelter = await this.shelterRepository.findOne({
@@ -204,23 +229,21 @@ export class VcService {
 
       await queryRunner.commitTransaction();
 
-      return {
-        success: true,
+      return createSuccessResponse({
         shelterId: shelter.id,
-        message: 'Shelter info updated',
-      };
+      }, 'Shelter info updated');
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      return {
-        success: false,
-        error: error.message,
-      };
+      return createErrorResponse(
+        VCErrorCode.TRANSACTION_FAILED,
+        `Shelter 정보 업데이트 실패: ${error.message}`
+      );
     } finally {
       await queryRunner.release();
     }
   }
 
-  async storeVC(data: any): Promise<any> {
+  async storeVC(data: any): Promise<VCResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -230,7 +253,8 @@ export class VcService {
       });
 
       if (!auth) {
-        throw new Error('지갑이 없습니다!');
+        await queryRunner.rollbackTransaction();
+        return createErrorResponse(VCErrorCode.WALLET_NOT_FOUND);
       }
 
       const vc = await queryRunner.manager.save(VC, {
@@ -244,126 +268,129 @@ export class VcService {
 
       await queryRunner.commitTransaction();
 
-      return {
-        success: true,
+      return createSuccessResponse({
         vcId: vc.id,
-        message: 'VC가 저장되었습니다!',
-      };
+      }, 'VC가 저장되었습니다!');
     } catch (error) {
       console.error('저장 실패했습니다!:', error);
       await queryRunner.rollbackTransaction();
-      return {
-        success: false,
-        error: error.message,
-      };
+      return createErrorResponse(
+        VCErrorCode.TRANSACTION_FAILED,
+        `VC 저장 실패: ${error.message}`
+      );
     } finally {
       await queryRunner.release();
     }
   }
 
-  async getVC(data: any): Promise<any> {
-    const auth = await this.authRepository.findOne({
-      where: { walletAddress: data.guardianAddress }
-    });
+  async getVC(data: any): Promise<VCResponse> {
+    try {
+      const auth = await this.authRepository.findOne({
+        where: { walletAddress: data.guardianAddress }
+      });
 
-    if (!auth) {
-      return { 
-        success: false, 
-        error: '지갑이 없습니다!' 
-      };
-    }
-
-    const vc = await this.vcRepository.findOne({
-      where: { 
-        auth: { id: auth.id },
-        petDID: data.petDID 
+      if (!auth) {
+        return createErrorResponse(VCErrorCode.WALLET_NOT_FOUND);
       }
-    });
 
-    if (!vc) {
-      return { 
-        success: false, 
-        error: 'vc가 없습니다!' 
-      };
+      const vc = await this.vcRepository.findOne({
+        where: {
+          auth: { id: auth.id },
+          petDID: data.petDID
+        }
+      });
+
+      if (!vc) {
+        return createErrorResponse(VCErrorCode.VC_NOT_FOUND);
+      }
+
+      return createSuccessResponse({
+        vcJwt: vc.vcJwt,
+        metadata: vc.metadata,
+        createdAt: vc.createdAt.toISOString(),
+      });
+    } catch (error) {
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        `VC 조회 실패: ${error.message}`
+      );
     }
-
-    return {
-      success: true,
-      vcJwt: vc.vcJwt,
-      metadata: vc.metadata,
-      createdAt: vc.createdAt.toISOString(),
-    };
   }
 
-  async getVCsByWallet(walletAddress: string): Promise<any> {
-    const auth = await this.authRepository.findOne({
-      where: { walletAddress },
-      relations: ['vcs'],
-    });
+  async getVCsByWallet(walletAddress: string): Promise<VCResponse> {
+    try {
+      const auth = await this.authRepository.findOne({
+        where: { walletAddress },
+        relations: ['vcs'],
+      });
 
-    if (!auth || !auth.vcs) {
-      return { vcs: [] };
+      if (!auth) {
+        return createErrorResponse(VCErrorCode.WALLET_NOT_FOUND);
+      }
+
+      const vcs = (auth.vcs || []).map(vc => ({
+        petDID: vc.petDID,
+        vcJwt: vc.vcJwt,
+        vcType: vc.vcType,
+        createdAt: vc.createdAt.toISOString(),
+      }));
+
+      return createSuccessResponse({ vcs });
+    } catch (error) {
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        `VC 목록 조회 실패: ${error.message}`
+      );
     }
-
-    const vcs = auth.vcs.map(vc => ({
-      petDID: vc.petDID,
-      vcJwt: vc.vcJwt,
-      vcType: vc.vcType,
-      createdAt: vc.createdAt.toISOString(),
-    }));
-
-    return { vcs };
   }
 
 
   /**
    * VC 무효화 (삭제 + 이유 기록)
    */
-  async invalidateVC(data: { petDID: string; guardianAddress: string; reason: string }): Promise<any> {
-    const auth = await this.authRepository.findOne({
-      where: { walletAddress: data.guardianAddress }
-    });
+  async invalidateVC(data: { petDID: string; guardianAddress: string; reason: string }): Promise<VCResponse> {
+    try {
+      const auth = await this.authRepository.findOne({
+        where: { walletAddress: data.guardianAddress }
+      });
 
-    if (!auth) {
-      return {
-        success: false,
-        error: '지갑이 존재하지 않습니다.'
-      };
-    }
-
-    // VC 존재 여부 확인
-    const vc = await this.vcRepository.findOne({
-      where: {
-        auth: { id: auth.id },
-        petDID: data.petDID
+      if (!auth) {
+        return createErrorResponse(VCErrorCode.WALLET_NOT_FOUND);
       }
-    });
 
-    if (!vc) {
-      return {
-        success: false,
-        error: 'VC가 존재하지 않습니다.'
-      };
+      // VC 존재 여부 확인
+      const vc = await this.vcRepository.findOne({
+        where: {
+          auth: { id: auth.id },
+          petDID: data.petDID
+        }
+      });
+
+      if (!vc) {
+        return createErrorResponse(VCErrorCode.VC_NOT_FOUND);
+      }
+
+      // VC 삭제
+      const result = await this.vcRepository.delete({
+        auth: { id: auth.id },
+        petDID: data.petDID,
+      });
+
+      if (result.affected > 0) {
+        console.log(`VC 무효화 완료 - petDID: ${data.petDID}, guardianAddress: ${data.guardianAddress}, 이유: ${data.reason}`);
+        return createSuccessResponse(null, 'VC가 무효화되었습니다.');
+      }
+
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        'VC 무효화 실패'
+      );
+    } catch (error) {
+      return createErrorResponse(
+        VCErrorCode.DATABASE_ERROR,
+        `VC 무효화 실패: ${error.message}`
+      );
     }
-
-    // VC 삭제
-    const result = await this.vcRepository.delete({
-      auth: { id: auth.id },
-      petDID: data.petDID,
-    });
-
-    if (result.affected > 0) {
-      console.log(`VC 무효화 완료 - petDID: ${data.petDID}, guardianAddress: ${data.guardianAddress}, 이유: ${data.reason}`);
-      return {
-        success: true,
-        message: 'VC가 무효화되었습니다.',
-      };
-    }
-
-    return {
-      success: false,
-      error: 'VC 무효화 실패'
-    };
   }
 
   /**
