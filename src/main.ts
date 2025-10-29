@@ -12,7 +12,7 @@ async function bootstrap() {
       options: {
         package: 'vc',
         protoPath: join(__dirname, './proto/vc.proto'),
-        url: '0.0.0.0:50051',
+        url: '0.0.0.0:50055',
         loader: {
           keepCase: true,
           longs: String,
